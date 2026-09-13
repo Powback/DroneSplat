@@ -1,0 +1,10 @@
+# keep the docker build context tiny — only pipeline/ + docker/ are needed
+captures/
+exports/
+tmp/
+viewer/
+docs/
+.git/
+*.md
+.gitignore
+pipeline/equirect/

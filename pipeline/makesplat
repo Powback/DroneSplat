@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#
+# makesplat — CPU path: A1 .insv → .ply, fully open, no GPU. Proves the whole chain.
+#
+#   pipeline/makesplat captures/raw/FLIGHT.insv
+#   → exports/FLIGHT.ply
+#
+# Chain (all CPU):  extract fisheye → reproject to perspective proxy → COLMAP PINHOLE
+#                   → OpenSplat training (CPU) → .ply → splat.pow
+#
+# This is the LOSSY proving path: OpenSplat is pinhole, so it trains on the perspective
+# proxy (not raw fisheye). Slow (~100× a GPU) and lower quality — but it RUNS end-to-end
+# with no GPU, validating every stage. The proper fisheye-native + GPU path is docker/.
+set -euo pipefail
+
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # pipeline/
+ROOT="$(cd "$SELF/.." && pwd)"                          # project root
+IN="${1:-}"; [[ -z "$IN" ]] && { echo "usage: pipeline/makesplat <file.insv> [--fps N]"; exit 1; }
+[[ -f "$IN" ]] || { echo "✗ no such file: $IN"; exit 1; }
+FPS="${FPS:-1}"; ITERS="${ITERS:-2000}"; FOV="${SFM_FOV:-110}"
+NAME="$(basename "${IN%.*}")"
+W="$ROOT/tmp/$NAME"; OUT="$ROOT/exports"
+FISH="$W/fish"; PROJ="$W/proj"
+rm -rf "$W"; mkdir -p "$FISH" "$PROJ/images" "$OUT"
+log(){ printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
+need(){ command -v "$1" >/dev/null || { echo "✗ missing: $1"; exit 1; }; }
+need ffmpeg; need colmap
+OPENSPLAT="${OPENSPLAT:-/opt/OpenSplat/build/opensplat}"
+[[ -x "$OPENSPLAT" ]] || { echo "✗ opensplat not found at $OPENSPLAT (build it; see README)"; exit 1; }
+
+log "1/5  extract fisheye (lens0)"
+python3 "$SELF/extract_fisheye.py" "$IN" --out "$FISH" --fps "$FPS"
+# CPU demo: one lens, downscaled
+python3 -c "
+import cv2,glob,os
+for f in sorted(glob.glob('$FISH/lens0_*.jpg')):
+    cv2.imwrite('$FISH/'+os.path.basename(f), cv2.resize(cv2.imread(f),(1024,1024)))
+"
+
+log "2/5  calibrate + reproject → perspective proxy (single cone)"
+python3 "$SELF/calibrate.py" --insv "$IN" --lens-size 1024 --fov 196 --out "$W/cam.json"
+FOCAL="$(python3 -c "import json;print(json.load(open('$W/cam.json'))['fx'])")"
+python3 "$SELF/reproject_sfm.py" --in "$FISH" --out "$PROJ/images" --single \
+  --fisheye-size 1024 --fisheye-focal "$FOCAL" --fov "$FOV"
+rm -f "$PROJ/images/rig.json"           # OpenSplat reads images/ only
+PFOCAL="$(python3 -c "import math;print((1024/2)/math.tan(math.radians($FOV)/2))")"
+
+log "3/5  COLMAP PINHOLE SfM (poses)"
+DB="$PROJ/db.db"
+colmap feature_extractor --database_path "$DB" --image_path "$PROJ/images" \
+  --ImageReader.camera_model PINHOLE --ImageReader.single_camera 1 \
+  --ImageReader.camera_params "$PFOCAL,$PFOCAL,512,512" --SiftExtraction.use_gpu 0
+colmap exhaustive_matcher --database_path "$DB" --SiftMatching.use_gpu 0
+mkdir -p "$PROJ/sparse"
+colmap mapper --database_path "$DB" --image_path "$PROJ/images" --output_path "$PROJ/sparse"
+[[ -d "$PROJ/sparse/0" ]] || { echo "✗ COLMAP found no model — denser footage / orbit, don't hover"; exit 1; }
+
+log "4/5  OpenSplat training (CPU · $ITERS iters · slow)"
+"$OPENSPLAT" "$PROJ" -n "$ITERS" -o "$OUT/$NAME.ply"
+
+log "5/5  done"
+[[ -f "$OUT/$NAME.ply" ]] && echo "✓ exports/$NAME.ply" || { echo "✗ no .ply produced"; exit 1; }
+echo "  view: copy to viewer/public/ and open splat.pow"

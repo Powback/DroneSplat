@@ -1,0 +1,18 @@
+# splat.pow — Astro splat viewer behind Traefik (local .pow domain).
+services:
+  splat-viewer:
+    build: .
+    image: dronesplat-viewer:latest
+    container_name: splat-viewer
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.splat.rule=Host(`splat.pow`)"
+      - "traefik.http.routers.splat.entrypoints=web"
+      - "traefik.http.services.splat.loadbalancer.server.port=80"
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    external: true

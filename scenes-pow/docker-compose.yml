@@ -1,0 +1,23 @@
+# scenes.pow — serves Streamed SOG splat scenes from NAS PowCache/scenes over HTTP.
+# The viewer (splat.pow) streams LOD chunks from here. Bind-mount (not NFS volume):
+# macOS autofs-mounts the NAS (NFSv3) → Colima VirtioFS → container binds the host path.
+# Use the explicit /Users/macback/nas path until the /mnt/nas symlink activates on reboot.
+services:
+  scenes-nginx:
+    image: nginx:alpine
+    container_name: scenes-nginx
+    restart: unless-stopped
+    volumes:
+      - /Users/macback/nas/PowCache/scenes:/usr/share/nginx/html:ro
+      - ./scenes-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.scenes.rule=Host(`scenes.pow`)"
+      - "traefik.http.routers.scenes.entrypoints=web"
+      - "traefik.http.services.scenes.loadbalancer.server.port=80"
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    external: true

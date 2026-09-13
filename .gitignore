@@ -1,0 +1,22 @@
+# data & outputs (large / regenerated)
+captures/**
+!captures/.gitkeep
+!captures/raw/.gitkeep
+exports/**
+!exports/.gitkeep
+tmp/
+
+# sample/demo assets (downloaded, not source)
+viewer/public/*.splat
+viewer/public/*.ply
+
+# build / deps
+node_modules/
+dist/
+__pycache__/
+*.pyc
+
+# raw camera files
+*.insv
+*.insp
+*.dng

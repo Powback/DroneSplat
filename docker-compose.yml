@@ -1,0 +1,37 @@
+# DroneSplat — CUDA pipeline for the RTX 5090 (Linux + nvidia-container-toolkit).
+#
+#   Build:   docker compose build
+#   Run:     docker compose run --rm splat /work/in/scene.mp4
+#            (drop footage in ./captures, splats land in ./exports)
+#
+# NOTE: Docker GPU passthrough is Linux/NVIDIA only — this targets the 5090 box,
+#       NOT the Mac (Metal isn't reachable from a container). On the Mac, use the
+#       native Brush path instead. Requires the nvidia-container-toolkit on the host.
+
+services:
+  splat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: dronesplat:cuda128
+    environment:
+      - POSER=${POSER:-colmap}     # colmap (CPU, ~32% on wide-FoV) / vggt (GPU, robust → higher registration)
+      - TRAINER=${TRAINER:-3dgut}  # 3dgut = volumetric splats / surfels = gsplat 2DGS surface-splatting
+      - FPS=${FPS:-2}              # frame sampling rate for extraction
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./captures:/work/in        # raw A1 footage (.mp4 — stitch .insv first)
+      - ./exports:/work/out        # finished .ply / .sog
+      - ./tmp:/work/tmp            # frames, perspective views, intermediate scene
+      - weights:/root/.cache       # model/kernel cache (persist across runs)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  weights:

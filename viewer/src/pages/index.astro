@@ -1,0 +1,53 @@
+---
+// DroneSplat viewer — high-performance STREAMING Gaussian-splat renderer.
+// PlayCanvas web-components (WebGPU compute renderer) loading a Streamed SOG
+// (lod-meta.json): lowest LOD shows instantly, higher LODs stream in by distance.
+// Produced by `splat-transform … lod-meta.json`. Swap /splat for any scene.
+// Streamed from the NAS via scenes.pow (PowCache/scenes/flight) — cross-origin, CORS-enabled.
+const splat = 'http://scenes.pow/flight/lod-meta.json';  // streamed from NAS PowCache/scenes
+const PC = 'https://cdn.jsdelivr.net/npm/playcanvas@2.20.1';
+const PWC = 'https://cdn.jsdelivr.net/npm/@playcanvas/web-components@0.8.0/dist/pwc.mjs';
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <title>DroneSplat · splat.pow</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; height: 100%; background: #0a0a0a; overflow: hidden; }
+      pc-app { position: fixed; inset: 0; }
+      #hud {
+        position: fixed; top: 12px; left: 14px; z-index: 10;
+        font: 13px/1.4 ui-monospace, monospace; color: #cbd5e1;
+        background: rgba(0,0,0,.45); padding: 8px 12px; border-radius: 8px; pointer-events: none;
+      }
+      #hud b { color: #f59e0b; }
+    </style>
+    <script type="importmap" set:html={`{"imports":{"playcanvas":"${PC}/build/playcanvas.mjs"}}`}></script>
+    <script type="module" src={PWC}></script>
+  </head>
+  <body>
+    <div id="hud"><b>splat.pow</b> · WebGPU streaming (SOG/LOD) · drag to orbit · scroll to zoom</div>
+
+    <!-- WebGPU compute renderer (auto-falls back to WebGL2) -->
+    <pc-app antialias="false" depth="false" high-resolution="true" stencil="false">
+      <pc-asset src={`${PC}/scripts/esm/camera-controls.mjs`}></pc-asset>
+      <!-- Streamed SOG manifest: engine streams LOD chunks on demand -->
+      <pc-asset src={splat} id="splat"></pc-asset>
+      <pc-scene>
+        <pc-entity name="camera" position="0 2 6">
+          <pc-camera clear-color="0.04 0.04 0.05"></pc-camera>
+          <pc-scripts>
+            <pc-script name="cameraControls" attributes='{"enableFly": false, "sceneSize": 6, "zoomRange": "vec2:0.2,40"}'></pc-script>
+          </pc-scripts>
+        </pc-entity>
+        <!-- 3DGS convention: flip 180° about Z so it lands right-side-up -->
+        <pc-entity name="splat" rotation="0 0 180">
+          <pc-gsplat asset="splat"></pc-gsplat>
+        </pc-entity>
+      </pc-scene>
+    </pc-app>
+  </body>
+</html>
