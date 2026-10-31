@@ -16,7 +16,9 @@ services:
     image: dronesplat:cuda128
     environment:
       - POSER=${POSER:-colmap}     # colmap (CPU, ~32% on wide-FoV) / vggt (GPU, robust → higher registration)
-      - TRAINER=${TRAINER:-3dgut}  # 3dgut = volumetric splats / surfels = gsplat 2DGS surface-splatting
+      - TRAINER=${TRAINER:-3dgut}  # 3dgut = volumetric splats / surfels = gsplat 2DGS surface-splatting / gofish = full-FoV GS + mesh
+      - GOFISH_DOWNSAMPLE=${GOFISH_DOWNSAMPLE:-1}  # gofish: 1 = native res; 2/4 if VRAM runs out
+      - GOFISH_MESH=${GOFISH_MESH:-1}              # gofish: 1 = also extract the aligned collision mesh
       - FPS=${FPS:-2}              # frame sampling rate for extraction
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

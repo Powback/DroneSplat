@@ -8,7 +8,9 @@
 
 FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TORCH_CUDA_ARCH_LIST="12.0"          # Blackwell sm_120 — every kernel must target this
+# Blackwell sm_120 — every kernel must target this (no inline comments on ENV lines: Docker
+# parses them as extra key=value pairs and fails the build).
+ENV TORCH_CUDA_ARCH_LIST="12.0"
 ENV PIP_NO_CACHE_DIR=1
 
 # ── System deps (+ COLMAP for fisheye SfM, ffmpeg for extraction) ─────────────
@@ -57,6 +59,40 @@ RUN git clone https://github.com/facebookresearch/vggt.git \
  && pip install --break-system-packages -e vggt || \
     echo "⚠️ vggt install needs a look on the 5090 — see repo README"
 
+# ── GOFish — full-FoV (>180°) fisheye GS + aligned mesh (TRAINER=gofish) ──────
+# Own venv: GOFish vendors its own `threedgrut` package (would shadow /opt/3dgrut above)
+# and targets Python 3.11 (image ships 3.12) → uv-managed 3.11 venv at /opt/gofish-venv.
+# Pinned to the commit run.sh was written against; bump deliberately.
+ARG GOFISH_REF=1a33e7a9ff73a58aefced35f23f320be3b7b76ac
+ARG SLANG_VER=2026.5.2
+RUN apt-get update && apt-get install -y --no-install-recommends libgmp-dev libcgal-dev \
+ && rm -rf /var/lib/apt/lists/*
+RUN pip install --break-system-packages uv \
+ && uv venv -p 3.11 /opt/gofish-venv
+ENV GOFISH_PY=/opt/gofish-venv/bin/python
+WORKDIR /opt
+RUN git clone --recursive https://github.com/tuallen/GOFish.git gofish \
+ && git -C gofish checkout "$GOFISH_REF" && git -C gofish submodule update --init --recursive
+WORKDIR /opt/gofish
+RUN uv pip install --python "$GOFISH_PY" torch torchvision --index-url https://download.pytorch.org/whl/cu128 \
+ && uv pip install --python "$GOFISH_PY" -e ".[eval]" \
+ && uv pip install --python "$GOFISH_PY" --no-build-isolation -r requirements_extra.txt \
+ || echo "⚠️ GOFish install needs a look on the 5090 — see its README (CUDA ext build for sm_120)"
+# Slang compiler — GOFish's renderer compiles Slang kernels (on first run).
+RUN mkdir -p /opt/slang \
+ && curl -L "https://github.com/shader-slang/slang/releases/download/v${SLANG_VER}/slang-${SLANG_VER}-linux-x86_64.tar.gz" \
+    | tar -xz -C /opt/slang
+ENV PATH="/opt/slang/bin:${PATH}"
+# Mesh extraction: GOF's tetra-triangulation (CGAL), built against the venv's torch.
+RUN git clone https://github.com/autonomousvision/gaussian-opacity-fields /opt/gaussian-opacity-fields \
+ && git -C /opt/gaussian-opacity-fields checkout 5245b20e5d11acd6d1ff5af4b890dc2bedd99693 \
+ && cd /opt/gaussian-opacity-fields/submodules/tetra-triangulation \
+ && sed -i 's/_GLIBCXX_USE_CXX11_ABI=0/_GLIBCXX_USE_CXX11_ABI=1/' cmake/FindTorch.cmake \
+ && CPATH=/usr/local/cuda/include cmake \
+      -DCMAKE_PREFIX_PATH="$($GOFISH_PY -c 'import torch; print(torch.utils.cmake_prefix_path)')" . \
+ && make && uv pip install --python "$GOFISH_PY" -e . \
+ || echo "⚠️ tetra-triangulation build failed — GOFISH_MESH=0 still trains; fix for meshes"
+
 # ── Web/VR compression ────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
  && npm i -g @playcanvas/splat-transform || true \
@@ -65,7 +101,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
 # ── Project entrypoint ────────────────────────────────────────────────────────
 WORKDIR /work
 COPY pipeline/extract_fisheye.py pipeline/calibrate.py \
-     pipeline/reproject_sfm.py pipeline/transplant_poses.py /opt/DroneSplat/
+     pipeline/reproject_sfm.py pipeline/transplant_poses.py \
+     pipeline/measure_aperture.py pipeline/gofish_to_ply.py /opt/DroneSplat/
 COPY docker/run.sh /opt/DroneSplat/run.sh
 RUN chmod +x /opt/DroneSplat/run.sh
 ENTRYPOINT ["/opt/DroneSplat/run.sh"]

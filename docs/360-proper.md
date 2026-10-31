@@ -73,6 +73,9 @@ for panoramic input → could skip the proxy entirely. multi-view proxy code (`r
 - **Compromise path (today, lossy):** fisheye → perspective crops → **Brush** (Metal). Brush is
   **pinhole-only**, so there is *no* resolution-preserving Mac route — native-fisheye GS needs
   the GPU. The Mac path is for quick tests before the 5090 lands, not final quality.
+- **GOFish is wired as `TRAINER=gofish`** (3dgrut-based, same COLMAP fisheye scene): measured
+  image-circle domain, FIORD preset, optional Geometry Objective → `FLIGHT.mesh.ply`. Run it
+  side by side with `3dgut` on the first 5090 flight and keep whichever looks better.
 - **3DGUT is the strategic pick:** distorted-camera-native AND the basis of the surface/mesh
   (surfels) track — one rasterizer family covers proper-360 *and* collision meshes.
 

@@ -54,7 +54,7 @@ esac
 python "$DS/transplant_poses.py" --proxy "$SCENE/proxy_sparse/0" --rig "$SCENE/proxy/rig.json" \
   --cam "$SCENE/cam_init.json" --out "$SCENE/sparse/0"
 
-TRAINER="${TRAINER:-3dgut}"   # 3dgut = volumetric splats | surfels = gsplat 2DGS surface-splatting
+TRAINER="${TRAINER:-3dgut}"   # 3dgut = volumetric splats | surfels = gsplat 2DGS surface-splatting | gofish = full-FoV GS + mesh
 echo "▶ 5/5  training  [TRAINER=$TRAINER · fisheye-native, raw frames, no resample]"
 case "$TRAINER" in
   3dgut)
@@ -76,7 +76,57 @@ case "$TRAINER" in
       --result-dir "$SCENE/out" \
       || { echo "⚠️ gsplat 2DGS CLI differs in your checkout — see examples/simple_trainer.py, update run.sh"; exit 1; }
     ;;
-  *) echo "✗ unknown TRAINER: $TRAINER (use 3dgut | surfels)"; exit 1 ;;
+  gofish)
+    # GOFish: full-FoV (>180°) fisheye GS + aligned collision mesh (docs/360-proper.md).
+    # Same COLMAP OPENCV_FISHEYE scene; FIORD preset = Insta360 dual 200° fisheye, the
+    # closest match to the A1. Lives in its own venv (see Dockerfile).
+    GF=/opt/gofish; GPY="${GOFISH_PY:-/opt/gofish-venv/bin/python}"
+    GDS="${GOFISH_DOWNSAMPLE:-1}"     # 1 = full native res (our rule); 2/4 if VRAM runs out
+    GMESH="${GOFISH_MESH:-1}"         # 1 = Geometry Objective + mesh.ply, 0 = splats only
+    GRUN="$SCENE/gofish_run"; mkdir -p "$GRUN" "$SCENE/out"
+    # Calibrated domain: measured image circle → GOFish never trains on the black corners.
+    python "$DS/measure_aperture.py" --in "$SCENE/images" --out "$SCENE/aperture.txt"
+    read -r ACX ACY AR < "$SCENE/aperture.txt"
+    (cd "$GF" && "$GPY" -m gofish.camera.make_domain "$SCENE/sparse/0" "$SCENE/domain.json" \
+      --aperture 1 "$ACX" "$ACY" "$AR")
+    if [[ "$GDS" != 1 ]]; then        # GOFish reads images_<k>/ at native//k
+      python - "$SCENE/images" "$SCENE/images_$GDS" "$GDS" <<'PY'
+import sys, cv2; from pathlib import Path
+src, dst, k = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]); dst.mkdir(exist_ok=True)
+for p in sorted(src.glob("*.jpg")):
+    im = cv2.imread(str(p)); h, w = im.shape[:2]
+    cv2.imwrite(str(dst / p.name), cv2.resize(im, (w // k, h // k), interpolation=cv2.INTER_AREA))
+PY
+    fi
+    # Renderer compiles one curvature bound per camera+resolution ("complete-admission table").
+    (cd "$GF" && "$GPY" -m gofish.tools.build_calibration_table \
+      --colmap "$SCENE/sparse/0/cameras.txt" --downsample "$GDS")
+    GARGS=(--config-name apps/fiord path="$SCENE" out_dir="$GRUN" experiment_name="$NAME"
+           "dataset.camera_domains=['$SCENE/domain.json']" dataset.downsample_factor="$GDS"
+           dataset.test_split_interval=0 dataset.load_exif=false)   # train on every frame; ffmpeg frames carry no EXIF
+    [[ "$GMESH" == 1 ]] && GARGS+=(geometry=sof)
+    gofish_train() { (cd "$GF" && "$GPY" train.py "${GARGS[@]}") 2>&1 | tee "$GRUN/train.log"; return "${PIPESTATUS[0]}"; }
+    if ! gofish_train; then
+      # A table miss prints the exact build_calibration_table command; run it once and retry.
+      CMDS="$(grep -oE 'python -m gofish\.tools\.build_calibration_table.*' "$GRUN/train.log" || true)"
+      [[ -n "$CMDS" ]] || { echo "⚠️ GOFish train failed — see $GRUN/train.log"; exit 1; }
+      while read -r c; do (cd "$GF" && eval "${c/python/$GPY}"); done <<< "$CMDS"
+      gofish_train || { echo "⚠️ GOFish train failed after table update — see $GRUN/train.log"; exit 1; }
+    fi
+    CKPT="$(find "$GRUN" -name 'ckpt_last.pt' | head -1)"
+    [[ -n "$CKPT" ]] || CKPT="$(find "$GRUN" -name 'ckpt_*.pt' | sort -V | tail -1)"
+    [[ -n "$CKPT" ]] || { echo "✗ GOFish wrote no checkpoint — see $GRUN/train.log"; exit 1; }
+    "$GPY" "$DS/gofish_to_ply.py" --checkpoint "$CKPT" --out "$SCENE/out/${NAME}.ply"
+    if [[ "$GMESH" == 1 ]]; then
+      GEO="$(find "$GRUN" -path '*ours_30000*' -name 'ckpt_30000.pt' | head -1)"   # geometry checkpoint
+      if [[ -n "$GEO" ]] && (cd "$GF" && "$GPY" mesh.py --checkpoint "$GEO" --out "$GRUN/mesh"); then
+        cp "$GRUN/mesh/mesh.ply" "$OUT/${NAME}.mesh.ply" && echo "  ✓ $OUT/${NAME}.mesh.ply"
+      else
+        echo "⚠️ GOFish mesh step failed/skipped (geometry ckpt: ${GEO:-none}) — splats still exported"
+      fi
+    fi
+    ;;
+  *) echo "✗ unknown TRAINER: $TRAINER (use 3dgut | surfels | gofish)"; exit 1 ;;
 esac
 
 PLY="$(find "$SCENE/out" -name '*.ply' | sort | tail -1)"

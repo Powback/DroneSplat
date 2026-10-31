@@ -8,7 +8,7 @@ no cloud, no undistortion loss.
 .insv → extract fisheye → calibrate → reproject→perspective (SfM proxy) → COLMAP PINHOLE
       → transplant poses → TRAIN on RAW fisheye → .ply → splat.pow
 
-      train = 3DGUT (volumetric)  OR  gsplat 2DGS (surfels / surface-splatting)
+      train = 3DGUT (volumetric)  OR  gsplat 2DGS (surfels)  OR  GOFish (full-FoV + mesh)
 ```
 
 **Why split SfM from training** (validated on real A1 footage, CPU COLMAP): raw 196° fisheye
@@ -21,9 +21,14 @@ dilute detail (DirectFisheye-GS 2026). Full rationale + numbers: **[docs/360-pro
 |---|---|---|---|---|
 | **`3dgut`** ⭐ | volumetric splats | full, zero resample | RTX 5090 (CUDA) | built — validates on the card |
 | **`surfels`** | **2DGS surfels** (gsplat, fisheye-native) | full, zero resample | RTX 5090 (CUDA) | built — validates on the card |
+| **`gofish`** | volumetric splats **>180°** + **aligned mesh** ([GOFish](https://3dgofish.github.io/)) | full (`GOFISH_DOWNSAMPLE=1`), zero resample | RTX 5090 (CUDA) | built — validates on the card |
 | Brush (Mac) | volumetric splats | lossy (reproject needed) | Mac Studio, today | front-end ✅ proven on real footage |
 
-Both CUDA trainers are **fisheye-native** (gsplat handles OpenCV fisheye + surfel mode in one
+`gofish` measures the A1's image circle so the black corners are never trained, uses GOFish's
+FIORD preset (Insta360 dual 200° fisheye), and with `GOFISH_MESH=1` (default) also writes
+`exports/FLIGHT.mesh.ply`. ⚠️ GOFish is **CC BY-NC 4.0** — fine for us, not for commercial use.
+
+All CUDA trainers are **fisheye-native** (gsplat handles OpenCV fisheye + surfel mode in one
 rasterizer). Surfel/surface-splatting details: **[docs/surface-splatting.md](docs/surface-splatting.md)**.
 
 > Brush is pinhole-only, so the Mac path *must* reproject (lossy) — there is no
@@ -36,6 +41,8 @@ pipeline/                 footage → splat (the work)
 ├── extract_fisheye.py    .insv → raw dual-fisheye frames (ffmpeg, no SDK)   ✅ real-data tested
 ├── calibrate.py          auto KB-fisheye intrinsics (factory parse + nominal) ✅ real-data tested
 ├── makesplat             Mac quick-test orchestrator (lossy; needs reproject step)
+├── measure_aperture.py   fisheye image circle from frames → GOFish camera domain
+├── gofish_to_ply.py      GOFish checkpoint → standard 3DGS .ply (for splat.pow)
 └── equirect/             alternate equirectangular route (not the proper path)
     ├── stitch_a1.py      Insta360-SDK byte-patch → stitched equirect
     └── prep360.py        equirect → 18 perspective views
@@ -57,6 +64,7 @@ captures/  exports/       data in/out (gitignored)
 docker compose build
 docker compose run --rm splat /work/in/FLIGHT.insv                      # volumetric (3DGUT)
 docker compose run --rm -e TRAINER=surfels splat /work/in/FLIGHT.insv   # surfels (gsplat 2DGS)
+docker compose run --rm -e TRAINER=gofish splat /work/in/FLIGHT.insv    # GOFish: splats + mesh.ply
 ```
 > ⚠️ Not yet executed — no 5090 in hand. Built correct-by-construction; the sm_120 kernel
 > build of `3dgrut` is the main first-run risk (see `docker/Dockerfile`).
