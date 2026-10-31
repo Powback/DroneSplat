@@ -23,6 +23,7 @@ sensor pixel is used; no warp, no seam, no black borders. Papers show native ERP
 | Method | What | Note |
 |---|---|---|
 | **DirectFisheye-GS** (2026) ⭐ | Kannala-Brandt rasterization in 3DGS + **cross-view joint optimization** | current best; fixes boundary artifacts of Fisheye-GS; native fisheye in, no preprocessing |
+| **GOFish** (2026) ⭐ | trains on raw fisheye, renders **beyond 180°** (full FoV), + **aligned collision mesh** (Gaussian Opacity Fields) | +2.28 dB PSNR on FIORD (200°), +1.97 dB on FullCircle (205°) vs best prior; models **lens rim falloff** so vignetting isn't baked into colors/mesh; code + scenes public. Fits the A1's 196° lens *and* the mesh track — evaluate vs 3DGUT on the 5090 |
 | **Fisheye-GS** (2024) | equidistant projection + Jacobian; lightweight module, bolts onto **gsplat/FlashGS** | proven, simple, the baseline |
 | **3DGUT** (NVIDIA, nv-tlabs/3dgrut) | Unscented-Transform rasterization, handles **any distorted camera** | also underpins the surfels/mesh track → unifying choice |
 
@@ -84,3 +85,5 @@ needs CUDA 12.8 + torch cu128 + `TORCH_CUDA_ARCH_LIST="12.0"`, patching each `se
 - [DirectFisheye-GS (2026)](https://arxiv.org/abs/2604.00648) · [Fisheye-GS (2024)](https://arxiv.org/abs/2409.04751)
 - [OmniGS (2024)](https://arxiv.org/abs/2404.03202) · [Seam360GS (ICCV 2025)](https://arxiv.org/pdf/2508.20080)
 - [3DGUT / 3dgrut (NVIDIA)](https://github.com/nv-tlabs/3dgrut)
+- [GOFish (2026)](https://3dgofish.github.io/) · [arXiv 2610.37818](https://arxiv.org/abs/2610.37818) ·
+  [code](https://github.com/tuallen/GOFish) · [scenes](https://huggingface.co/datasets/AllenTu/GOFish-scenes)

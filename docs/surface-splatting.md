@@ -42,8 +42,14 @@ Surfels extract to a mesh cleanly (TSDF/Poisson on their normals+depth). Methods
 **MILo** wrap a surfel rasterizer for low-poly meshes. Not wired — a future stage if the
 game-level collision need comes back. Don't confuse it with the surfel representation itself.
 
+**GOFish** (2026) is the strongest fisheye-native mesh candidate: volumetric GS trained on raw
+fisheye (>180°), with a full-FoV mesh via Gaussian Opacity Fields aligned to the same scene —
+best mesh F-score on FIORD. Not surfels, but it skips the surfel→mesh step entirely. See
+[360-proper.md](360-proper.md).
+
 ## Sources
 - [gsplat (fisheye + 2DGS/normals)](https://github.com/nerfstudio-project/gsplat) ·
   [2DGS](https://github.com/hbb1/2d-gaussian-splatting) ·
   [Gaussian Surfels](https://github.com/turandai/gaussian-surfels) ·
-  [Seam360GS (ICCV'25)](https://arxiv.org/pdf/2508.20080)
+  [Seam360GS (ICCV'25)](https://arxiv.org/pdf/2508.20080) ·
+  [GOFish (2026)](https://3dgofish.github.io/) ([code](https://github.com/tuallen/GOFish))
