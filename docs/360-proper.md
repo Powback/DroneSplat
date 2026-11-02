@@ -79,6 +79,29 @@ for panoramic input → could skip the proxy entirely. multi-view proxy code (`r
 - **3DGUT is the strategic pick:** distorted-camera-native AND the basis of the surface/mesh
   (surfels) track — one rasterizer family covers proper-360 *and* collision meshes.
 
+## Multi-GPU (checked 2026-11-02): nothing off-the-shelf does it for 360
+- **gsplat** distributed (Grendel-style, Gaussians partitioned across GPUs) is **pinhole-only**.
+  `gsplat/cuda/csrc/Rendering.cpp` rejects `distributed=True` with `camera_model!='pinhole'`,
+  `with_ut`, `with_eval3d` and any camera distortion.
+- **Grendel-GS**: same limit (INRIA pinhole rasterizer).
+- **GOFish / 3dgrut**: single-GPU, no distributed code.
+- ⚠️ gsplat's example COLMAP loader (`examples/datasets/colmap.py`) **undistorts** OPENCV_FISHEYE
+  (remap + crop) before training, so stock `simple_trainer` is *not* fisheye-native, and a 196°
+  lens can't be fully undistorted. Our `TRAINER=surfels` path inherits this. It also calls a
+  `2dgs` subcommand that `simple_trainer.py` doesn't have (2DGS is `simple_trainer_2dgs.py`).
+
+Routes to two GPUs for fisheye-native training, cheapest first:
+1. **Spatial blocks** (VastGaussian / CityGaussian style): split the scene into overlapping
+   blocks, train each block with GOFish on its own GPU, crop the overlaps, merge the PLYs. Pools
+   VRAM (each card holds part of the scene), trainer unchanged. Pays off for big flights, less so
+   for one small orbit.
+2. **Data-parallel GOFish**: a full replica per GPU, each renders different views, gradients
+   all-reduced every step so densification stays identical. About 1.7× faster per run, **no** extra
+   VRAM. A patch to GOFish's trainer.
+3. **Model-parallel UT/fisheye rasterizer** (port Grendel's partitioning to 3DGUT): research-sized.
+On gpu-195 any of these needs GPU0, which belongs to voice. Both cards only with voice explicitly
+off (GPU-SERVERS-PLAN.md).
+
 ## ⚠️ 5090 build note
 All native rasterizers are custom CUDA extensions pinned to old CUDA (11.8). Blackwell sm_120
 needs CUDA 12.8 + torch cu128 + `TORCH_CUDA_ARCH_LIST="12.0"`, patching each `setup.py`.
