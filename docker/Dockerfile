@@ -1,4 +1,4 @@
-# DroneSplat — PROPER 360 pipeline for the RTX 5090 (Blackwell / sm_120).
+# DroneSplat — PROPER 360 pipeline for CUDA: RTX 5090 (sm_120) or RTX 3090 on gpu-195 (sm_86).
 # Fisheye-NATIVE: raw dual-fisheye → COLMAP fisheye SfM → 3DGUT training. NO undistort,
 # NO reproject, NO resample — every native pixel used (see docs/360-proper.md).
 # 3DGUT (nv-tlabs/3dgrut) is distorted-camera-native AND the basis of the mesh/surfels track.
@@ -8,9 +8,11 @@
 
 FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
 ENV DEBIAN_FRONTEND=noninteractive
-# Blackwell sm_120 — every kernel must target this (no inline comments on ENV lines: Docker
-# parses them as extra key=value pairs and fails the build).
-ENV TORCH_CUDA_ARCH_LIST="12.0"
+# Kernel targets: 8.6 = RTX 3090 (gpu-195, Ampere), 12.0 = RTX 5090 (Blackwell). One image
+# runs on both; narrow it (--build-arg CUDA_ARCHS=8.6) for faster builds. No inline
+# comments on ENV lines: Docker parses them as extra key=value pairs and fails the build.
+ARG CUDA_ARCHS="8.6;12.0"
+ENV TORCH_CUDA_ARCH_LIST="${CUDA_ARCHS}"
 ENV PIP_NO_CACHE_DIR=1
 
 # ── System deps (+ COLMAP for fisheye SfM, ffmpeg for extraction) ─────────────

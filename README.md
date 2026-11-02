@@ -59,7 +59,7 @@ docs/
 captures/  exports/       data in/out (gitignored)
 ```
 
-## Run it — proper pipeline (RTX 5090 / Linux + CUDA)
+## Run it — proper pipeline (RTX 5090 or 3090 / Linux + CUDA)
 ```bash
 docker compose build
 docker compose run --rm splat /work/in/FLIGHT.insv                      # volumetric (3DGUT)
@@ -68,6 +68,17 @@ docker compose run --rm -e TRAINER=gofish splat /work/in/FLIGHT.insv    # GOFish
 ```
 > ⚠️ Not yet executed — no 5090 in hand. Built correct-by-construction; the sm_120 kernel
 > build of `3dgrut` is the main first-run risk (see `docker/Dockerfile`).
+
+### On gpu-195 (2× RTX 3090) — available today
+The image targets both sm_86 (3090) and sm_120 (5090). On `.195`:
+- **One card, not two.** Every trainer is single-GPU; SLI/NVLink doesn't pool VRAM for them.
+  GPU0 is reserved for the realtime voice path — never allocate on it. Use **GPU1** (shared
+  with the on-demand LLM pool + `stt-batch`, ~21 GB free when the pool is unloaded).
+- **24 GB:** start GOFish at `GOFISH_DOWNSAMPLE=2` (paper trained FIORD at ÷4 on a 24 GB A10G);
+  try `1` once a run's peak VRAM is known.
+- The box runs rootless podman + CDI, not Docker: `--device nvidia.com/gpu=1
+  --security-opt label=disable`. Ad-hoc runs aren't allowed there — a splat job needs a
+  registered unit (GPU1 pin, VRAM budget) per `PowOS/docs/GPU-SERVERS-PLAN.md`.
 
 ## Run it — CPU path (works today, no GPU) ✅
 ```bash
