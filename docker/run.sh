@@ -5,26 +5,27 @@
 # 196° fisheye does NOT register in COLMAP (validated: 3/118 vs 38/118). See docs/360-proper.md.
 set -euo pipefail
 
-IN="${1:-}"; [[ -z "$IN" ]] && { echo "usage: <compose run> splat /work/in/<file.insv>"; exit 1; }
+IN="${1:-}"; [[ -z "$IN" ]] && { echo "usage: <compose run> splat /work/in/<file.insv|.insp|flight-folder>"; exit 1; }
 NAME="$(basename "${IN%.*}")"
 FISH="/work/tmp/${NAME}_fish"; SCENE="/work/tmp/${NAME}_scene"; OUT="/work/out"
 FPS="${FPS:-2}"; FOV="${SFM_FOV:-110}"
 mkdir -p "$FISH" "$SCENE/images" "$OUT"
 DS=/opt/DroneSplat
 
-echo "▶ 1/5  extract raw dual-fisheye (ffmpeg, no SDK)"
+echo "▶ 1/5  extract raw per-lens fisheye (ffmpeg, no SDK; .insv / .insp / flight folder)"
 python "$DS/extract_fisheye.py" "$IN" --out "$FISH" --fps "$FPS"
 cp "$FISH"/*.jpg "$SCENE/images/"          # RAW fisheye = training images
 
-echo "▶ 2/5  auto-calibrate (KB fisheye)"
-python "$DS/calibrate.py" --insv "$IN" --out "$SCENE/cam_init.json"
+echo "▶ 2/5  per-lens calibration (measured image circle → KB equisolid)"
+python "$DS/measure_aperture.py" --in "$SCENE/images" --out "$SCENE/apertures.json"
+INSV=(); [[ -f "$IN" && "${IN,,}" == *.insv ]] && INSV=(--insv "$IN")
+python "$DS/calibrate.py" --apertures "$SCENE/apertures.json" "${INSV[@]}" --out "$SCENE/cam_init.json"
 
 echo "▶ 3/5  reproject fisheye → ${FOV}° perspective proxy (SfM only)"
-FOCAL="$(python -c "import json;print(json.load(open('$SCENE/cam_init.json'))['fx'])")"
-SIZE="$(python -c "import json;print(json.load(open('$SCENE/cam_init.json'))['width'])")"
-python "$DS/reproject_sfm.py" --in "$SCENE/images" --out "$SCENE/proxy" \
-  --fisheye-size "$SIZE" --fisheye-focal "$FOCAL" --fov "$FOV"
-PFOCAL="$(python -c "import math;print(($SIZE/2)/math.tan(math.radians($FOV)/2))")"
+python "$DS/reproject_sfm.py" --in "$SCENE/images" --out "$SCENE/proxy" --cam "$SCENE/cam_init.json" --fov "$FOV"
+# Proxy camera = what reproject_sfm actually wrote (rig.json), not the fisheye size.
+read -r PFOCAL PSIZE < <(python -c "import json;r=json.load(open('$SCENE/proxy/rig.json'));print(r['pfocal'],r['out_size'])")
+SIZE="$PSIZE"
 
 POSER="${POSER:-colmap}"   # colmap (CPU, ~32% on wide-FoV) | vggt (GPU, robust — pushes registration up)
 echo "▶ 4/5  pose proxy  [POSER=$POSER] → transplant onto fisheye"
@@ -84,11 +85,13 @@ case "$TRAINER" in
     GDS="${GOFISH_DOWNSAMPLE:-1}"     # 1 = full native res (our rule); 2/4 if VRAM runs out
     GMESH="${GOFISH_MESH:-1}"         # 1 = Geometry Objective + mesh.ply, 0 = splats only
     GRUN="$SCENE/gofish_run"; mkdir -p "$GRUN" "$SCENE/out"
-    # Calibrated domain: measured image circle → GOFish never trains on the black corners.
-    python "$DS/measure_aperture.py" --in "$SCENE/images" --out "$SCENE/aperture.txt"
-    read -r ACX ACY AR < "$SCENE/aperture.txt"
-    (cd "$GF" && "$GPY" -m gofish.camera.make_domain "$SCENE/sparse/0" "$SCENE/domain.json" \
-      --aperture 1 "$ACX" "$ACY" "$AR")
+    # Calibrated domain: each lens's measured image circle (step 2) → GOFish never trains on
+    # the black corners. Camera ids follow transplant_poses: sorted lenses → 1, 2.
+    mapfile -t APER < <(python -c "
+import json
+for i, (_, a) in enumerate(sorted(json.load(open('$SCENE/apertures.json')).items()), 1):
+    print('--aperture', i, a['cx'], a['cy'], a['r_train'])")
+    (cd "$GF" && "$GPY" -m gofish.camera.make_domain "$SCENE/sparse/0" "$SCENE/domain.json" $(printf '%s ' "${APER[@]}"))
     if [[ "$GDS" != 1 ]]; then        # GOFish reads images_<k>/ at native//k
       python - "$SCENE/images" "$SCENE/images_$GDS" "$GDS" <<'PY'
 import sys, cv2; from pathlib import Path

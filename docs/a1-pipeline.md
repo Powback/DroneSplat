@@ -59,6 +59,23 @@ lazy convenience if you specifically want pre-stitched equirect and don't mind t
   Google-Drive large-file fetches) loses `moov` and ffmpeg reports "moov atom not found".
   Always verify `mdat` declared size vs file size before processing.
 
+## A1 format support in the pipeline (2026-11-02)
+| | status |
+|---|---|
+| `.insv` two tracks (2× 3840² HEVC, one per lens) | ✅ `lens0_*` / `lens1_*`, unpaired tail frames dropped |
+| `.insv` single side-by-side track (W = 2H) | ✅ auto-split L → lens0, R → lens1 |
+| `.insp` photo (JPEG + trailer) | ✅ split into lens0/lens1, no SDK, no byte-patch |
+| folder of `.insv`/`.insp` from one flight | ✅ all extracted, numbered on (LRV previews skipped) |
+| truncated download (`moov` lost / box past EOF) | ✅ refused up front with a clear message |
+| two lenses = two cameras | ✅ `measure_aperture` → `calibrate` → one OPENCV_FISHEYE per lens (`transplant_poses`), per-lens GOFish aperture |
+| projection model | ✅ equisolid as exact KB k1..k4 everywhere (calibrate, reproject, trainers) — was equidistant k=0 with an equisolid focal |
+| factory calibration floats in the trailer | ⚠️ found + exposed, **not used** — needs a real `.insv` to verify the float→intrinsics mapping |
+| gyro / GPS telemetry in the trailer | ❌ needs a real `.insv` to decode (would give SfM pose priors) |
+| front/back lens rig constraint (same instant, fixed 180°) | ❌ lenses posed independently today |
+
+Synthetic end-to-end test (equisolid renders with off-centre circles, every layout): circles
+within 0.04 px, focals within 0.03 px, proxies match a direct pinhole render to JPEG noise.
+
 ## The proven Mac-native pipeline (runs TODAY, no 5090)
 ```
 .insv/.insp → stitch_a1.py patch → MediaSDK (Docker) → equirect mp4

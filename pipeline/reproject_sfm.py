@@ -10,8 +10,8 @@ pose is later recovered from ANY registered sub-view (transplant_poses.py).
 Training still happens on the RAW fisheye — these proxies are throwaway scaffolding.
 See docs/360-proper.md.
 
-  python3 reproject_sfm.py --in FLIGHT_fish --out FLIGHT_proxy \
-      --fisheye-focal 339 --fisheye-size 1024 --fov 90
+  python3 reproject_sfm.py --in FLIGHT_fish --out FLIGHT_proxy --cam cam_init.json --fov 110
+Each lensN_* frame is reprojected through its own lens's intrinsics (calibrate.py).
 Writes the proxy views + rig.json (per-view rotation, needed by the transplant).
 """
 import argparse, json, math, sys
@@ -33,8 +33,9 @@ def rot(yaw_deg: float, pitch_deg: float) -> np.ndarray:
     return Ry @ Rx                                  # view-frame → fisheye-frame
 
 
-def build_map(in_size, in_focal, out_size, fov_deg, R):
-    c = in_size / 2
+def build_map(cam, out_size, fov_deg, R):
+    """Perspective view → source pixel map through the lens's OPENCV_FISHEYE (Kannala-Brandt)
+    model — the same model the trainers use, so proxy poses transplant exactly."""
     fp = (out_size / 2) / math.tan(math.radians(fov_deg) / 2)
     j, i = np.meshgrid(np.arange(out_size), np.arange(out_size))
     x = (j - out_size / 2) / fp; y = (i - out_size / 2) / fp; z = np.ones_like(x)
@@ -44,16 +45,19 @@ def build_map(in_size, in_focal, out_size, fov_deg, R):
     dx, dy, dz = df[..., 0], df[..., 1], df[..., 2]
     theta = np.arctan2(np.sqrt(dx * dx + dy * dy), dz)
     phi = np.arctan2(dy, dx)
-    r = in_focal * theta                             # equidistant fisheye
-    return (c + r * np.cos(phi)).astype(np.float32), (c + r * np.sin(phi)).astype(np.float32), fp
+    t2 = theta * theta
+    r = cam["fx"] * theta * (1 + t2 * (cam["k1"] + t2 * (cam["k2"] + t2 * (cam["k3"] + t2 * cam["k4"]))))
+    return ((cam["cx"] + r * np.cos(phi)).astype(np.float32),
+            (cam["cy"] + r * np.sin(phi)).astype(np.float32), fp)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="fisheye → multi-view perspective proxy for SfM")
     ap.add_argument("--in", dest="indir", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--fisheye-size", type=int, default=1024)
-    ap.add_argument("--fisheye-focal", type=float, default=339.0)
+    ap.add_argument("--cam", type=Path, help="calibrate.py JSON (per-lens KB intrinsics) — preferred")
+    ap.add_argument("--fisheye-size", type=int, default=1024, help="no --cam: centred equidistant lens")
+    ap.add_argument("--fisheye-focal", type=float, default=339.0, help="no --cam: equidistant focal")
     ap.add_argument("--fov", type=float, default=90.0, help="per-view FoV degrees")
     ap.add_argument("--out-size", type=int, default=1024)
     ap.add_argument("--single", action="store_true", help="center cone only (reliable CPU path)")
@@ -61,12 +65,18 @@ def main() -> None:
 
     args.out.mkdir(parents=True, exist_ok=True)
     rig = [(0, 0)] if args.single else DEFAULT_RIG
-    maps = []
-    fp = None
-    for (yaw, pitch) in rig:
-        mx, my, fp = build_map(args.fisheye_size, args.fisheye_focal, args.out_size, args.fov,
-                               rot(yaw, pitch))
-        maps.append((mx, my))
+    if args.cam:
+        lenses = json.loads(args.cam.read_text())["lenses"]
+    else:
+        c = args.fisheye_size / 2
+        lenses = {"*": {"fx": args.fisheye_focal, "cx": c, "cy": c, "k1": 0, "k2": 0, "k3": 0, "k4": 0,
+                        "width": args.fisheye_size, "height": args.fisheye_size}}
+    maps, fp = {}, None                               # lens → per-view maps
+    for lens, cam in lenses.items():
+        maps[lens] = []
+        for (yaw, pitch) in rig:
+            mx, my, fp = build_map(cam, args.out_size, args.fov, rot(yaw, pitch))
+            maps[lens].append((mx, my))
 
     frames = sorted(args.indir.glob("*.jpg")) + sorted(args.indir.glob("*.png"))
     if not frames:
@@ -75,9 +85,13 @@ def main() -> None:
         im = cv2.imread(str(f))
         if im is None:
             continue
-        if im.shape[0] != args.fisheye_size:
-            im = cv2.resize(im, (args.fisheye_size, args.fisheye_size))
-        for k, (mx, my) in enumerate(maps):
+        lens = f.stem.split("_")[0] if f.stem.split("_")[0] in maps else "*"
+        if lens not in maps:
+            sys.exit(f"✗ {f.name}: no intrinsics for lens '{f.stem.split('_')[0]}' in {args.cam}")
+        cam = lenses[lens]
+        if im.shape[:2] != (cam["height"], cam["width"]):
+            im = cv2.resize(im, (cam["width"], cam["height"]))
+        for k, (mx, my) in enumerate(maps[lens]):
             pv = cv2.remap(im, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
             cv2.imwrite(str(args.out / f"{f.stem}__v{k}.jpg"), pv)
 

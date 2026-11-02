@@ -39,9 +39,8 @@ for f in sorted(glob.glob('$FISH/lens0_*.jpg')):
 
 log "2/5  calibrate + reproject → perspective proxy (single cone)"
 python3 "$SELF/calibrate.py" --insv "$IN" --lens-size 1024 --fov 196 --out "$W/cam.json"
-FOCAL="$(python3 -c "import json;print(json.load(open('$W/cam.json'))['fx'])")"
 python3 "$SELF/reproject_sfm.py" --in "$FISH" --out "$PROJ/images" --single \
-  --fisheye-size 1024 --fisheye-focal "$FOCAL" --fov "$FOV"
+  --cam "$W/cam.json" --fov "$FOV"
 rm -f "$PROJ/images/rig.json"           # OpenSplat reads images/ only
 PFOCAL="$(python3 -c "import math;print((1024/2)/math.tan(math.radians($FOV)/2))")"
 

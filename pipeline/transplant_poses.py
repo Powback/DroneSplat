@@ -8,7 +8,7 @@ if ANY of its sub-views registered; we recover the fisheye world-to-camera pose:
 
     R_f = R_k · R_cam_k          t_f = R_k · t_k        (R_k = view→fisheye rotation)
 
-then write one OPENCV_FISHEYE camera + one image per frame (raw fisheye name), keeping
+then write one OPENCV_FISHEYE camera per lens + one image per frame (raw fisheye name), keeping
 the proxy's points3D (world-frame, camera-model-independent). The trainer runs on the
 RAW fisheye frames — full resolution; the proxy was only geometry scaffolding.
 
@@ -79,16 +79,23 @@ def main() -> None:
         t_f = Rk @ t
         frames[stem] = (R2q(R_f), t_f)
 
-    cam = json.load(open(args.cam))
+    # One OPENCV_FISHEYE camera per physical lens (lens0 → id 1, lens1 → id 2): the two
+    # A1 lenses have their own principal point/focal (calibrate.py).
+    cj = json.load(open(args.cam))
+    lenses = cj.get("lenses") or {"*": cj}
+    cam_id = {lens: i for i, lens in enumerate(sorted(lenses), start=1)}
     (args.out / "cameras.txt").write_text(
-        "# CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[fx,fy,cx,cy,k1,k2,k3,k4]\n"
-        f"1 OPENCV_FISHEYE {cam['width']} {cam['height']} "
-        f"{cam['fx']} {cam['fy']} {cam['cx']} {cam['cy']} "
-        f"{cam['k1']} {cam['k2']} {cam['k3']} {cam['k4']}\n")
+        "# CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[fx,fy,cx,cy,k1,k2,k3,k4]\n" + "".join(
+            f"{cam_id[lens]} OPENCV_FISHEYE {c['width']} {c['height']} "
+            f"{c['fx']} {c['fy']} {c['cx']} {c['cy']} {c['k1']} {c['k2']} {c['k3']} {c['k4']}\n"
+            for lens, c in sorted(lenses.items())))
 
     out_lines = ["# Image list"]
     for idx, (stem, (q, t)) in enumerate(sorted(frames.items()), start=1):
-        out_lines.append(f"{idx} {q[0]} {q[1]} {q[2]} {q[3]} {t[0]} {t[1]} {t[2]} 1 {stem}{args.ext}")
+        cid = cam_id.get(stem.split("_")[0], cam_id.get("*"))
+        if cid is None:
+            sys.exit(f"✗ {stem}: no intrinsics for its lens in {args.cam}")
+        out_lines.append(f"{idx} {q[0]} {q[1]} {q[2]} {q[3]} {t[0]} {t[1]} {t[2]} {cid} {stem}{args.ext}")
         out_lines.append("")          # empty points2D line (trainer uses points3D + poses)
     (args.out / "images.txt").write_text("\n".join(out_lines) + "\n")
 
@@ -96,7 +103,9 @@ def main() -> None:
     (args.out / "points3D.txt").write_text((tmp / "points3D.txt").read_text())
 
     print(f"✓ fisheye training model → {args.out}")
-    print(f"  {len(frames)} fisheye frames posed | OPENCV_FISHEYE {cam['width']}px focal {cam['fx']:.0f}")
+    per_lens = {lens: sum(s.split("_")[0] == lens for s in frames) for lens in sorted(lenses)}
+    print(f"  {len(frames)} fisheye frames posed | OPENCV_FISHEYE × {len(lenses)} lens(es): "
+          + ", ".join(f"{lens} {n}" for lens, n in per_lens.items()))
 
 
 if __name__ == "__main__":
