@@ -73,6 +73,11 @@ lazy convenience if you specifically want pre-stitched equirect and don't mind t
 | gyro / GPS telemetry in the trailer | ❌ needs a real `.insv` to decode (would give SfM pose priors) |
 | front/back lens rig constraint (same instant, fixed 180°) | ❌ lenses posed independently today |
 
+| people / movers | ✅ `mask_people.py` (`MASK_PEOPLE=1`): SAM 3 text prompt "person" on 9 perspective views per lens, back-projected through the lens model, dilated (`MASK_DILATE`) → COLMAP feature masks + `<frame>_mask.png` for GOFish/3dgrut loss. SAM 3 weights are gated: accept at huggingface.co/facebook/sam3, pass `HF_TOKEN`; or `MASKER=maskrcnn`. Not masked: shadows, and stock gsplat (`surfels`) ignores masks |
+
+Masking geometry test (fake segmenter, person at 85° off-axis): IoU 0.967 vs truth, 100% of the
+person's pixels under the COLMAP proxy masks.
+
 Synthetic end-to-end test (equisolid renders with off-centre circles, every layout): circles
 within 0.04 px, focals within 0.03 px, proxies match a direct pinhole render to JPEG noise.
 

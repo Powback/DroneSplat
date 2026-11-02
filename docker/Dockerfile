@@ -61,6 +61,15 @@ RUN git clone https://github.com/facebookresearch/vggt.git \
  && pip install --break-system-packages -e vggt || \
     echo "⚠️ vggt install needs a look on the 5090 — see repo README"
 
+# ── SAM 3 — text-prompted segmentation for people masks (MASK_PEOPLE=1) ───────
+# Latest Segment Anything as of 2026-11 (3.1 only changed video tracking). Needs py3.12 +
+# torch ≥2.7 — the system env above. Weights are gated (facebook/sam3 on Hugging Face):
+# fetched at run time with HF_TOKEN into the persisted /root/.cache, never baked in.
+WORKDIR /opt
+RUN git clone https://github.com/facebookresearch/sam3.git \
+ && pip install --break-system-packages -e sam3 || \
+    echo "⚠️ sam3 install needs a look — MASKER=maskrcnn still works (torchvision)"
+
 # ── GOFish — full-FoV (>180°) fisheye GS + aligned mesh (TRAINER=gofish) ──────
 # Own venv: GOFish vendors its own `threedgrut` package (would shadow /opt/3dgrut above)
 # and targets Python 3.11 (image ships 3.12) → uv-managed 3.11 venv at /opt/gofish-venv.
@@ -104,7 +113,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
 WORKDIR /work
 COPY pipeline/extract_fisheye.py pipeline/calibrate.py \
      pipeline/reproject_sfm.py pipeline/transplant_poses.py \
-     pipeline/measure_aperture.py pipeline/gofish_to_ply.py /opt/DroneSplat/
+     pipeline/measure_aperture.py pipeline/gofish_to_ply.py pipeline/mask_people.py /opt/DroneSplat/
 COPY docker/run.sh /opt/DroneSplat/run.sh
 RUN chmod +x /opt/DroneSplat/run.sh
 ENTRYPOINT ["/opt/DroneSplat/run.sh"]

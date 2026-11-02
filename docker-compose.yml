@@ -19,6 +19,11 @@ services:
       - TRAINER=${TRAINER:-3dgut}  # 3dgut = volumetric splats / surfels = gsplat 2DGS surface-splatting / gofish = full-FoV GS + mesh
       - GOFISH_DOWNSAMPLE=${GOFISH_DOWNSAMPLE:-1}  # gofish: 1 = native res; 2/4 if VRAM runs out
       - GOFISH_MESH=${GOFISH_MESH:-1}              # gofish: 1 = also extract the aligned collision mesh
+      - MASK_PEOPLE=${MASK_PEOPLE:-1}              # 1 = mask people out of SfM + training
+      - MASKER=${MASKER:-sam3}                     # sam3 (gated weights → HF_TOKEN) | maskrcnn (no token)
+      - MASK_CLASSES=${MASK_CLASSES:-person}       # sam3: any noun phrases, comma-separated
+      - MASK_DILATE=${MASK_DILATE:-16}             # padding around each mask, native px
+      - HF_TOKEN                                   # passed through from the host env, never stored
       - FPS=${FPS:-2}              # frame sampling rate for extraction
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

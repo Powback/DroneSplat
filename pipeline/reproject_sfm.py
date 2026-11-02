@@ -61,7 +61,11 @@ def main() -> None:
     ap.add_argument("--fov", type=float, default=90.0, help="per-view FoV degrees")
     ap.add_argument("--out-size", type=int, default=1024)
     ap.add_argument("--single", action="store_true", help="center cone only (reliable CPU path)")
+    ap.add_argument("--masks", type=Path, help="fisheye masks (mask_people.py: <stem>.png, 0 = ignore)")
+    ap.add_argument("--mask-out", type=Path, help="proxy masks for COLMAP --ImageReader.mask_path")
     args = ap.parse_args()
+    if args.masks and not args.mask_out:
+        sys.exit("✗ --masks needs --mask-out")
 
     args.out.mkdir(parents=True, exist_ok=True)
     rig = [(0, 0)] if args.single else DEFAULT_RIG
@@ -78,7 +82,10 @@ def main() -> None:
             mx, my, fp = build_map(cam, args.out_size, args.fov, rot(yaw, pitch))
             maps[lens].append((mx, my))
 
-    frames = sorted(args.indir.glob("*.jpg")) + sorted(args.indir.glob("*.png"))
+    frames = [f for f in sorted(args.indir.glob("*.jpg")) + sorted(args.indir.glob("*.png"))
+              if not f.stem.endswith("_mask")]
+    if args.mask_out:
+        args.mask_out.mkdir(parents=True, exist_ok=True)
     if not frames:
         sys.exit(f"✗ no frames in {args.indir}")
     for f in frames:
@@ -91,9 +98,18 @@ def main() -> None:
         cam = lenses[lens]
         if im.shape[:2] != (cam["height"], cam["width"]):
             im = cv2.resize(im, (cam["width"], cam["height"]))
+        mask = None
+        if args.masks and (args.masks / f"{f.stem}.png").is_file():
+            mask = cv2.imread(str(args.masks / f"{f.stem}.png"), cv2.IMREAD_GRAYSCALE)
+            if mask.shape != (cam["height"], cam["width"]):
+                mask = cv2.resize(mask, (cam["width"], cam["height"]), interpolation=cv2.INTER_NEAREST)
         for k, (mx, my) in enumerate(maps[lens]):
             pv = cv2.remap(im, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
             cv2.imwrite(str(args.out / f"{f.stem}__v{k}.jpg"), pv)
+            if mask is not None:   # COLMAP: mask for image X is X.png; features under 0 are dropped
+                pm = cv2.remap(mask, mx, my, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT,
+                               borderValue=255)
+                cv2.imwrite(str(args.mask_out / f"{f.stem}__v{k}.jpg.png"), pm)
 
     (args.out / "rig.json").write_text(json.dumps({
         "views": [{"k": k, "yaw": y, "pitch": p, "R": rot(y, p).tolist()}

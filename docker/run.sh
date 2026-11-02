@@ -21,8 +21,17 @@ python "$DS/measure_aperture.py" --in "$SCENE/images" --out "$SCENE/apertures.js
 INSV=(); [[ -f "$IN" && "${IN,,}" == *.insv ]] && INSV=(--insv "$IN")
 python "$DS/calibrate.py" --apertures "$SCENE/apertures.json" "${INSV[@]}" --out "$SCENE/cam_init.json"
 
+MASKS=()
+if [[ "${MASK_PEOPLE:-1}" == 1 ]]; then
+  # People/movers → masked out of SfM features and the training loss (docs/a1-pipeline.md).
+  echo "▶ 2b    mask people  [MASKER=${MASKER:-sam3} · '${MASK_CLASSES:-person}']"
+  python "$DS/mask_people.py" --in "$SCENE/images" --cam "$SCENE/cam_init.json" --out "$SCENE/masks" \
+    --model "${MASKER:-sam3}" --classes "${MASK_CLASSES:-person}" --dilate "${MASK_DILATE:-16}"
+  MASKS=(--masks "$SCENE/masks" --mask-out "$SCENE/proxy_masks")
+fi
+
 echo "▶ 3/5  reproject fisheye → ${FOV}° perspective proxy (SfM only)"
-python "$DS/reproject_sfm.py" --in "$SCENE/images" --out "$SCENE/proxy" --cam "$SCENE/cam_init.json" --fov "$FOV"
+python "$DS/reproject_sfm.py" --in "$SCENE/images" --out "$SCENE/proxy" --cam "$SCENE/cam_init.json" --fov "$FOV" "${MASKS[@]}"
 # Proxy camera = what reproject_sfm actually wrote (rig.json), not the fisheye size.
 read -r PFOCAL PSIZE < <(python -c "import json;r=json.load(open('$SCENE/proxy/rig.json'));print(r['pfocal'],r['out_size'])")
 SIZE="$PSIZE"
@@ -34,7 +43,8 @@ case "$POSER" in
   colmap)
     # Classical SfM. Caps low on wide-baseline drone footage (validated). CPU-OK.
     DB="$SCENE/db.db"
-    colmap feature_extractor --database_path "$DB" --image_path "$SCENE/proxy" \
+    CMASK=(); [[ -d "$SCENE/proxy_masks" ]] && CMASK=(--ImageReader.mask_path "$SCENE/proxy_masks")
+    colmap feature_extractor --database_path "$DB" --image_path "$SCENE/proxy" "${CMASK[@]}" \
       --ImageReader.camera_model PINHOLE --ImageReader.single_camera 1 \
       --ImageReader.camera_params "$PFOCAL,$PFOCAL,$((SIZE/2)),$((SIZE/2))" --SiftExtraction.use_gpu 0
     colmap exhaustive_matcher --database_path "$DB" --SiftMatching.use_gpu 0
@@ -56,6 +66,10 @@ python "$DS/transplant_poses.py" --proxy "$SCENE/proxy_sparse/0" --rig "$SCENE/p
   --cam "$SCENE/cam_init.json" --out "$SCENE/sparse/0"
 
 TRAINER="${TRAINER:-3dgut}"   # 3dgut = volumetric splats | surfels = gsplat 2DGS surface-splatting | gofish = full-FoV GS + mesh
+# 3dgrut-family loaders (gofish; 3dgut) read <image>_mask.png beside each frame: 255 learn, 0 ignore.
+if [[ -d "$SCENE/masks" ]]; then
+  for m in "$SCENE/masks"/*.png; do cp "$m" "$SCENE/images/$(basename "${m%.png}")_mask.png"; done
+fi
 echo "▶ 5/5  training  [TRAINER=$TRAINER · fisheye-native, raw frames, no resample]"
 case "$TRAINER" in
   3dgut)
@@ -99,6 +113,9 @@ src, dst, k = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]); dst.mkdir(
 for p in sorted(src.glob("*.jpg")):
     im = cv2.imread(str(p)); h, w = im.shape[:2]
     cv2.imwrite(str(dst / p.name), cv2.resize(im, (w // k, h // k), interpolation=cv2.INTER_AREA))
+for p in sorted(src.glob("*_mask.png")):   # masks must match the training resolution
+    m = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE); h, w = m.shape
+    cv2.imwrite(str(dst / p.name), cv2.resize(m, (w // k, h // k), interpolation=cv2.INTER_NEAREST))
 PY
     fi
     # Renderer compiles one curvature bound per camera+resolution ("complete-admission table").
